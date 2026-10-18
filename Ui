@@ -1,0 +1,2407 @@
+local UserInputService = cloneref( game : GetService( "UserInputService" ) );
+local TweenService = cloneref( game : GetService( "TweenService" ) );
+local HttpService = cloneref( game : GetService( "HttpService" ) );
+local CoreGui = cloneref( game : GetService( "CoreGui" ) );
+local Players = cloneref( game : GetService( "Players" ) );
+
+local Library = {
+	Flags = { };
+	Connections = { };
+	Popups = { };
+	Keybinds = { };
+	Windows = { };
+	Toggles = { };
+	Options = { };
+	Directory = "Vitality";
+	TextSize = 12;
+
+	Theme = {
+		[ "Background" ] = Color3.fromRGB( 24, 24, 24 );
+		[ "Container" ] = Color3.fromRGB( 21, 21, 21 );
+		[ "Section" ] = Color3.fromRGB( 19, 19, 19 );
+		[ "Element" ] = Color3.fromRGB( 30, 30, 30 );
+		[ "Off" ] = Color3.fromRGB( 44, 44, 44 );
+		[ "Hover" ] = Color3.fromRGB( 40, 40, 40 );
+		[ "Text" ] = Color3.fromRGB( 226, 226, 226 );
+		[ "Dim" ] = Color3.fromRGB( 150, 150, 150 );
+		[ "Dimmer" ] = Color3.fromRGB( 105, 105, 105 );
+		[ "Accent" ] = Color3.fromRGB( 255, 105, 180 );
+		[ "Outline 1" ] = Color3.fromRGB( 44, 44, 44 );
+		[ "Outline 2" ] = Color3.fromRGB( 30, 30, 30 );
+		[ "Outline 3" ] = Color3.fromRGB( 14, 14, 14 );
+		[ "Outline 4" ] = Color3.fromRGB( 8, 8, 8 );
+		[ "Notify" ] = Color3.fromRGB( 20, 20, 20 );
+	};
+};
+
+local Theme = Library.Theme;
+local White = Color3.fromRGB( 255, 255, 255 );
+local Black = Color3.fromRGB( 0, 0, 0 );
+local Smooth = TweenInfo.new( 0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out );
+
+pcall( function()
+	if not isfolder( Library.Directory ) then makefolder( Library.Directory ); end;
+	if not isfolder( Library.Directory .. "/Assets" ) then makefolder( Library.Directory .. "/Assets" ); end;
+end );
+
+local function cleanup()
+	local Parent = ( gethui and gethui() ) or CoreGui;
+
+	for _, Gui in pairs( Parent : GetChildren() ) do
+		if Gui : IsA( "ScreenGui" ) and ( Gui.Name == "VitalityOverlay" or Gui.Name == "VitalityMain" or Gui.Name == "VitalityPopup" ) then
+			pcall( function() Gui : Destroy(); end );
+		end;
+	end;
+end;
+
+cleanup();
+
+-- HTTP helper with executor fallbacks (fixes github raw 302 redirects)
+local function httpGet( Url )
+	local Success, Result = pcall( function()
+		if syn and syn.request then
+			return syn.request( { Url = Url; Method = "GET" } ).Body;
+		elseif http and http.request then
+			return http.request( { Url = Url; Method = "GET" } ).Body;
+		elseif request then
+			return request( { Url = Url; Method = "GET" } ).Body;
+		elseif fluxus and fluxus.request then
+			return fluxus.request( { Url = Url; Method = "GET" } ).Body;
+		end;
+
+		return game : HttpGet( Url );
+	end );
+
+	if not Success or not Result or Result == "" then
+		warn( "[Vitality] HttpGet failed: " .. tostring( Result ) );
+		return nil;
+	end;
+
+	return Result;
+end;
+
+function Library : NewFont( Name, Weight, Style, AssetId, FontUrl )
+	local Success, Result = pcall( function()
+		local Folder = Library.Directory .. "/Assets/";
+		local FilePath = Folder .. AssetId;
+
+		if not isfile( FilePath ) then
+			local Data = httpGet( FontUrl );
+
+			if not Data then
+				error( "failed to download " .. tostring( FontUrl ) );
+			end;
+
+			writefile( FilePath, Data );
+		end;
+
+		local FontFile = Folder .. Name .. ".font";
+
+		if isfile( FontFile ) then
+			delfile( FontFile );
+		end;
+
+		writefile( FontFile, HttpService : JSONEncode( {
+			name = Name;
+			faces = {
+				{
+					name = "Regular";
+					weight = Weight;
+					style = Style;
+					assetId = getcustomasset( FilePath );
+				};
+			};
+		} ) );
+
+		return Font.new( getcustomasset( FontFile ) );
+	end );
+
+	if not Success then
+		warn( "[Vitality] failed to load font " .. tostring( Name ) .. ": " .. tostring( Result ) );
+		return nil;
+	end;
+
+	return Result;
+end;
+
+-- NOTE: raw.githubusercontent.com = direct URL, no 302 redirect (works with all executors)
+Library.Font = Library : NewFont(
+	"Verdana", 400, "normal", "Verdana.ttf",
+	"https://raw.githubusercontent.com/matomo-org/travis-scripts/master/fonts/Verdana.ttf"
+) or Font.fromEnum( Enum.Font.Roboto );
+
+Library.BoldFont = Library : NewFont(
+	"VerdanaBold", 700, "normal", "Verdana-Bold.ttf",
+	"https://raw.githubusercontent.com/eellak/OpenLab_Website/master/fonts/Verdana-Bold/Verdana-Bold.ttf"
+) or Font.new( "rbxasset://fonts/families/Roboto.json", Enum.FontWeight.Bold, Enum.FontStyle.Normal );
+
+local function connect( Signal, Callback )
+	local Connection = Signal : Connect( Callback );
+	table.insert( Library.Connections, Connection );
+	return Connection;
+end;
+
+local function call( Callback, ... )
+	if type( Callback ) ~= "function" then return end;
+
+	local Success, Error = pcall( Callback, ... );
+
+	if not Success then
+		warn( "[Vitality] " .. tostring( Error ) );
+	end;
+end;
+
+local StrokeOrder = { "Outline 1", "Outline 3", "Outline 2", "Outline 4" };
+
+local function strokes( Parent, Count )
+	for Index = 1, ( Count or 4 ) do
+		local Stroke = Instance.new( "UIStroke" );
+		Stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border;
+		Stroke.LineJoinMode = Enum.LineJoinMode.Miter;
+		Stroke.Color = Theme[ StrokeOrder[ Index ] ];
+		Stroke.BorderOffset = UDim.new( 0, Index - 1 );
+		Stroke.Name = "\0";
+		Stroke.Parent = Parent;
+	end;
+end;
+
+local function textStroke( Parent )
+	local Stroke = Instance.new( "UIStroke" );
+	Stroke.Transparency = 0.55;
+	Stroke.Name = "\0";
+	Stroke.Parent = Parent;
+	return Stroke;
+end;
+
+local function gradient( Parent, Top, Bottom, Rotation )
+	local Grad = Instance.new( "UIGradient" );
+	Grad.Rotation = Rotation or 90;
+	Grad.Color = ColorSequence.new( Color3.fromRGB( Top, Top, Top ), Color3.fromRGB( Bottom, Bottom, Bottom ) );
+	Grad.Name = "\0";
+	Grad.Parent = Parent;
+	return Grad;
+end;
+
+local function accentGradient( Parent, Rotation )
+	local Grad = Instance.new( "UIGradient" );
+	Grad.Rotation = Rotation or 90;
+	Grad.Color = ColorSequence.new( {
+		ColorSequenceKeypoint.new( 0, Color3.fromRGB( 255, 255, 255 ) );
+		ColorSequenceKeypoint.new( 0.5, Color3.fromRGB( 214, 214, 214 ) );
+		ColorSequenceKeypoint.new( 1, Color3.fromRGB( 168, 168, 168 ) );
+	} );
+	Grad.Name = "\0";
+	Grad.Parent = Parent;
+	return Grad;
+end;
+
+local function tween( Object, Properties, Time, Style, Direction )
+	local Info = Smooth;
+
+	if Time then
+		Info = TweenInfo.new( Time, Style or Enum.EasingStyle.Quint, Direction or Enum.EasingDirection.Out );
+	end;
+
+	local NewTween = TweenService : Create( Object, Info, Properties );
+	NewTween : Play();
+	return NewTween;
+end;
+
+local function gui( Order, Name )
+	local Gui = Instance.new( "ScreenGui" );
+	Gui.IgnoreGuiInset = true;
+	Gui.ResetOnSpawn = false;
+	Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling;
+	Gui.DisplayOrder = Order;
+	Gui.Name = Name;
+
+	if syn and syn.protect_gui then
+		pcall( syn.protect_gui, Gui );
+	end;
+
+	local Success = pcall( function()
+		Gui.Parent = ( gethui and gethui() ) or CoreGui;
+	end );
+
+	if not Success then
+		Gui.Parent = Players.LocalPlayer : WaitForChild( "PlayerGui" );
+	end;
+
+	return Gui;
+end;
+
+local OverlayGui = gui( 99998, "VitalityOverlay" );
+local Gui = gui( 100000, "VitalityMain" );
+local PopupGui = gui( 100001, "VitalityPopup" );
+
+local Probe = Instance.new( "Frame" );
+Probe.BackgroundTransparency = 1;
+Probe.Active = false;
+Probe.Size = UDim2.fromScale( 1, 1 );
+Probe.BorderSizePixel = 0;
+Probe.Name = "\0";
+Probe.Parent = PopupGui;
+
+local function getOrigin() return Probe.AbsolutePosition; end;
+local function getMousePoint() return UserInputService : GetMouseLocation() + getOrigin(); end;
+
+local function isOver( Object )
+	local Mouse = getMousePoint();
+	local Position, Size = Object.AbsolutePosition, Object.AbsoluteSize;
+	return Mouse.X >= Position.X and Mouse.X <= Position.X + Size.X and Mouse.Y >= Position.Y and Mouse.Y <= Position.Y + Size.Y;
+end;
+
+local function isPress( Input )
+	return Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch;
+end;
+
+local function isMove( Input )
+	return Input.UserInputType == Enum.UserInputType.MouseMovement or Input.UserInputType == Enum.UserInputType.Touch;
+end;
+
+local function drag( Object, OnMove, OnState )
+	local Active = false;
+
+	connect( Object.InputBegan, function( Input )
+		if isPress( Input ) then
+			Active = true;
+			if OnState then OnState( true ); end;
+			OnMove( getMousePoint() );
+		end;
+	end );
+
+	connect( UserInputService.InputChanged, function( Input )
+		if Active and isMove( Input ) then
+			OnMove( getMousePoint() );
+		end;
+	end );
+
+	connect( UserInputService.InputEnded, function( Input )
+		if Active and isPress( Input ) then
+			Active = false;
+			if OnState then OnState( false ); end;
+		end;
+	end );
+end;
+
+local function draggable( Frame )
+	local Dragging = false;
+	local DragStart;
+	local StartPosition;
+
+	connect( Frame.InputBegan, function( Input )
+		if isPress( Input ) then
+			Dragging = true;
+			DragStart = Input.Position;
+			StartPosition = Frame.Position;
+		end;
+	end );
+
+	connect( UserInputService.InputChanged, function( Input )
+		if Dragging and isMove( Input ) then
+			local Delta = Input.Position - DragStart;
+			Frame.Position = UDim2.new( StartPosition.X.Scale, StartPosition.X.Offset + Delta.X, StartPosition.Y.Scale, StartPosition.Y.Offset + Delta.Y );
+		end;
+	end );
+
+	connect( UserInputService.InputEnded, function( Input )
+		if isPress( Input ) then Dragging = false; end;
+	end );
+end;
+
+local function closePopups( Except )
+	for _, Popup in Library.Popups do
+		if Popup ~= Except and Popup.Open then
+			Popup.Close();
+		end;
+	end;
+end;
+
+local function getDate()
+	local Day = tonumber( os.date( "%d" ) );
+	local Suffix = "th";
+
+	if Day % 100 < 11 or Day % 100 > 13 then
+		local Last = Day % 10;
+		if Last == 1 then Suffix = "st"; elseif Last == 2 then Suffix = "nd"; elseif Last == 3 then Suffix = "rd"; end;
+	end;
+
+	return os.date( "%b " ) .. Day .. Suffix .. ". " .. os.date( "%Y" );
+end;
+
+function Library : Text( Params )
+	Params = Params or {};
+
+	local Label = Instance.new( "TextLabel" );
+	Label.FontFace = Params.Font or Library.Font;
+	Label.Text = Params.Text or "Text";
+	Label.TextSize = Params.Size or 18;
+	Label.TextColor3 = Params.Color or White;
+	Label.TextTransparency = Params.Transparency or 0;
+	Label.TextStrokeColor3 = Params.StrokeColor or Black;
+	Label.TextStrokeTransparency = ( Params.Stroke == false ) and 1 or 0;
+	Label.AnchorPoint = Params.AnchorPoint or Vector2.new( 0.5, 0 );
+	Label.Position = Params.Position or UDim2.new( 0.5, 0, 0, 24 );
+	Label.Size = UDim2.fromOffset( 0, 0 );
+	Label.AutomaticSize = Enum.AutomaticSize.XY;
+	Label.BackgroundTransparency = 1;
+	Label.BorderSizePixel = 0;
+	Label.Name = "\0";
+	Label.Parent = OverlayGui;
+
+	textStroke( Label );
+
+	return Label;
+end;
+
+-- Watermark removed per request.
+
+local NotifyHolder = Instance.new( "Frame" );
+NotifyHolder.BackgroundTransparency = 1;
+NotifyHolder.AnchorPoint = Vector2.new( 1, 1 );
+NotifyHolder.Position = UDim2.new( 1, -14, 1, -14 );
+NotifyHolder.Size = UDim2.new( 0, 270, 1, -28 );
+NotifyHolder.BorderSizePixel = 0;
+NotifyHolder.Name = "\0";
+NotifyHolder.Parent = PopupGui;
+
+local NotifyList = Instance.new( "UIListLayout" );
+NotifyList.Padding = UDim.new( 0, 6 );
+NotifyList.HorizontalAlignment = Enum.HorizontalAlignment.Right;
+NotifyList.VerticalAlignment = Enum.VerticalAlignment.Bottom;
+NotifyList.SortOrder = Enum.SortOrder.LayoutOrder;
+NotifyList.Name = "\0";
+NotifyList.Parent = NotifyHolder;
+
+function Library : Notify( Params )
+	if type( Params ) == "string" then Params = { Text = Params }; end;
+
+	local Duration = Params.Duration or 5;
+	local Title = Params.Title or "Vitality";
+	local Text = Params.Text or "";
+
+	local Holder = Instance.new( "Frame" );
+	Holder.BackgroundTransparency = 1;
+	Holder.Size = UDim2.new( 1, 0, 0, 0 );
+	Holder.AutomaticSize = Enum.AutomaticSize.Y;
+	Holder.BorderSizePixel = 0;
+	Holder.Name = "\0";
+	Holder.Parent = NotifyHolder;
+
+	local Card = Instance.new( "Frame" );
+	Card.Position = UDim2.fromOffset( 290, 0 );
+	Card.Size = UDim2.new( 1, 0, 0, 0 );
+	Card.AutomaticSize = Enum.AutomaticSize.Y;
+	Card.BackgroundColor3 = Theme[ "Notify" ];
+	Card.BorderSizePixel = 0;
+	Card.Name = "\0";
+	Card.Parent = Holder;
+
+	strokes( Card, 4 );
+
+	local Accent = Instance.new( "Frame" );
+	Accent.Size = UDim2.new( 0, 2, 1, 0 );
+	Accent.BackgroundColor3 = Theme[ "Accent" ];
+	Accent.BorderSizePixel = 0;
+	Accent.Name = "\0";
+	Accent.Parent = Card;
+
+	accentGradient( Accent, 90 );
+
+	local Pad = Instance.new( "Frame" );
+	Pad.BackgroundTransparency = 1;
+	Pad.Position = UDim2.fromOffset( 14, 10 );
+	Pad.Size = UDim2.new( 1, -28, 0, 0 );
+	Pad.AutomaticSize = Enum.AutomaticSize.Y;
+	Pad.BorderSizePixel = 0;
+	Pad.Name = "\0";
+	Pad.Parent = Card;
+
+	local PadList = Instance.new( "UIListLayout" );
+	PadList.Padding = UDim.new( 0, 4 );
+	PadList.SortOrder = Enum.SortOrder.LayoutOrder;
+	PadList.Name = "\0";
+	PadList.Parent = Pad;
+
+	local TitleLabel = Instance.new( "TextLabel" );
+	TitleLabel.FontFace = Library.BoldFont;
+	TitleLabel.Text = Title;
+	TitleLabel.TextSize = Library.TextSize + 1;
+	TitleLabel.TextColor3 = Theme[ "Accent" ];
+	TitleLabel.BackgroundTransparency = 1;
+	TitleLabel.BorderSizePixel = 0;
+	TitleLabel.Size = UDim2.new( 1, 0, 0, 16 );
+	TitleLabel.LayoutOrder = 1;
+	TitleLabel.TextXAlignment = Enum.TextXAlignment.Left;
+	TitleLabel.Name = "\0";
+	TitleLabel.Parent = Pad;
+
+	textStroke( TitleLabel );
+
+	local Body = Instance.new( "TextLabel" );
+	Body.FontFace = Library.Font;
+	Body.Text = Text;
+	Body.TextSize = Library.TextSize;
+	Body.TextColor3 = Theme[ "Text" ];
+	Body.BackgroundTransparency = 1;
+	Body.BorderSizePixel = 0;
+	Body.Size = UDim2.new( 1, 0, 0, 0 );
+	Body.AutomaticSize = Enum.AutomaticSize.Y;
+	Body.TextWrapped = true;
+	Body.TextYAlignment = Enum.TextYAlignment.Top;
+	Body.TextXAlignment = Enum.TextXAlignment.Left;
+	Body.LayoutOrder = 2;
+	Body.Name = "\0";
+	Body.Parent = Pad;
+
+	textStroke( Body );
+
+	local BodyPad = Instance.new( "UIPadding" );
+	BodyPad.PaddingBottom = UDim.new( 0, 12 );
+	BodyPad.Name = "\0";
+	BodyPad.Parent = Pad;
+
+	local Bar = Instance.new( "Frame" );
+	Bar.Position = UDim2.new( 0, 0, 1, -2 );
+	Bar.Size = UDim2.new( 1, 0, 0, 2 );
+	Bar.BackgroundColor3 = Theme[ "Accent" ];
+	Bar.BorderSizePixel = 0;
+	Bar.Name = "\0";
+	Bar.Parent = Card;
+
+	accentGradient( Bar, 90 );
+
+	tween( Card, { Position = UDim2.fromOffset( 0, 0 ) }, 0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out );
+	tween( Bar, { Size = UDim2.new( 0, 0, 0, 2 ) }, Duration, Enum.EasingStyle.Linear );
+
+	local Dismissed = false;
+
+	local function Dismiss()
+		if Dismissed or not Holder.Parent then return end;
+		Dismissed = true;
+
+		local Out = tween( Card, {
+			Position = UDim2.fromOffset( 290, 0 );
+			BackgroundTransparency = 1;
+		}, 0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.In );
+
+		Out.Completed : Once( function() Holder : Destroy(); end );
+	end;
+
+	task.delay( Duration, Dismiss );
+end;
+
+local function keyName( Key )
+	if not Key then return "None"; end;
+	if Key == Enum.UserInputType.MouseButton1 then return "MB1"; end;
+	if Key == Enum.UserInputType.MouseButton2 then return "MB2"; end;
+	if Key == Enum.UserInputType.MouseButton3 then return "MB3"; end;
+	return Key.Name;
+end;
+
+local function modeSelector( Parent, Keybind, OnSelect )
+	local Entry = { Open = false; Anchor = Parent; };
+
+	local Popup = Instance.new( "Frame" );
+	Popup.Size = UDim2.fromOffset( 64, 68 );
+	Popup.Visible = false;
+	Popup.ZIndex = 5;
+	Popup.BackgroundColor3 = Theme[ "Background" ];
+	Popup.BorderSizePixel = 0;
+	Popup.Name = "\0";
+	Popup.Parent = PopupGui;
+
+	Entry.Frame = Popup;
+
+	strokes( Popup, 4 );
+
+	local List = Instance.new( "UIListLayout" );
+	List.Padding = UDim.new( 0, 0 );
+	List.SortOrder = Enum.SortOrder.LayoutOrder;
+	List.Name = "\0";
+	List.Parent = Popup;
+
+	local Pad = Instance.new( "UIPadding" );
+	Pad.PaddingTop = UDim.new( 0, 4 );
+	Pad.PaddingBottom = UDim.new( 0, 4 );
+	Pad.PaddingLeft = UDim.new( 0, 2 );
+	Pad.PaddingRight = UDim.new( 0, 2 );
+	Pad.Name = "\0";
+	Pad.Parent = Popup;
+
+	local Options = { "Toggle", "Hold", "Always" };
+	local OptionButtons = {};
+
+	local function paint()
+		for ModeName, Data in OptionButtons do
+			local Active = ( ModeName == Keybind.Mode );
+			tween( Data.Label, { TextColor3 = Active and Theme[ "Accent" ] or Theme[ "Text" ] }, 0.15 );
+		end;
+	end;
+
+	for Index, ModeName in Options do
+		local Option = Instance.new( "TextButton" );
+		Option.Size = UDim2.new( 1, 0, 0, 20 );
+		Option.BackgroundTransparency = 1;
+		Option.LayoutOrder = Index;
+		Option.BorderSizePixel = 0;
+		Option.AutoButtonColor = false;
+		Option.Text = "";
+		Option.Name = "\0";
+		Option.Parent = Popup;
+
+		local Label = Instance.new( "TextLabel" );
+		Label.FontFace = Library.BoldFont;
+		Label.Text = ModeName;
+		Label.TextSize = Library.TextSize;
+		Label.TextColor3 = Theme[ "Text" ];
+		Label.BackgroundTransparency = 1;
+		Label.BorderSizePixel = 0;
+		Label.Size = UDim2.fromScale( 1, 1 );
+		Label.TextXAlignment = Enum.TextXAlignment.Center;
+		Label.Name = "\0";
+		Label.Parent = Option;
+
+		textStroke( Label );
+
+		OptionButtons[ ModeName ] = { Button = Option; Label = Label; };
+
+		connect( Option.MouseEnter, function()
+			if ModeName ~= Keybind.Mode then
+				tween( Label, { TextColor3 = Theme[ "Dim" ] }, 0.15 );
+			end;
+		end );
+
+		connect( Option.MouseLeave, function()
+			if ModeName ~= Keybind.Mode then
+				tween( Label, { TextColor3 = Theme[ "Text" ] }, 0.15 );
+			end;
+		end );
+
+		connect( Option.MouseButton1Click, function()
+			OnSelect( ModeName );
+			paint();
+			Entry.Close();
+		end );
+	end;
+
+	function Entry.Close()
+		Entry.Open = false;
+		Popup.Visible = false;
+	end;
+
+	function Entry.Show()
+		closePopups( Entry );
+		paint();
+
+		local Viewport = workspace.CurrentCamera.ViewportSize;
+		local Raw = Parent.AbsolutePosition - getOrigin();
+		local X = math.clamp( Raw.X, 6, math.max( Viewport.X - 64 - 6, 6 ) );
+		local Y = Raw.Y + Parent.AbsoluteSize.Y + 4;
+
+		if Y + 68 > Viewport.Y - 6 then
+			Y = Raw.Y - 68 - 4;
+		end;
+
+		Popup.Position = UDim2.fromOffset( X, Y );
+		Popup.Visible = true;
+		Entry.Open = true;
+	end;
+
+	table.insert( Library.Popups, Entry );
+
+	return Entry;
+end;
+
+local function keybind( Parent, Params )
+	Params = Params or {};
+
+	local Flag = Params.Flag or Params.Name or "Keybind";
+	local Keybind = { Key = nil; Mode = Params.Mode or "Toggle"; Active = false; Listening = false; Value = nil; Flag = Flag; Name = Params.Name or Flag; };
+
+	local Button = Instance.new( "TextButton" );
+	Button.FontFace = Library.BoldFont;
+	Button.TextSize = Library.TextSize;
+	Button.Text = "None";
+	Button.TextColor3 = Theme[ "Dim" ];
+	Button.BackgroundTransparency = 1;
+	Button.BorderSizePixel = 0;
+	Button.AutoButtonColor = false;
+	Button.Size = UDim2.new( 0, 0, 0, 16 );
+	Button.AutomaticSize = Enum.AutomaticSize.X;
+	Button.Name = "\0";
+	Button.Parent = Parent;
+
+	textStroke( Button );
+
+	local function Refresh()
+		Button.Text = Keybind.Listening and "..." or keyName( Keybind.Key );
+		local Target = Keybind.Listening and Theme[ "Accent" ] or Theme[ "Dim" ];
+		tween( Button, { TextColor3 = Target }, 0.15 );
+	end;
+
+	local function SyncLink()
+		if Params.Link and typeof( Params.Link ) == "table" and Params.Link.Set then
+			Params.Link : Set( Keybind.Active );
+		end;
+	end;
+
+	function Keybind : SetActive( Bool )
+		Keybind.Active = Bool and true or false;
+		Library.Flags[ Flag ] = Keybind.Active;
+	end;
+
+	function Keybind : Press( Down )
+		local Old = Keybind.Active;
+
+		if Keybind.Mode == "Toggle" then
+			if Down then Keybind.Active = not Keybind.Active; end;
+		elseif Keybind.Mode == "Hold" then
+			Keybind.Active = Down;
+		else
+			Keybind.Active = true;
+		end;
+
+		Library.Flags[ Flag ] = Keybind.Active;
+		Keybind.Value = Keybind.Active;
+
+		if Keybind.Active ~= Old then
+			call( Params.Callback, Keybind.Active );
+			SyncLink();
+		end;
+	end;
+
+	function Keybind : Set( Key, Mode, Silent )
+		if Mode then Keybind.Mode = Mode; end;
+		Keybind.Key = Key;
+		Keybind.Value = Key;
+
+		if Keybind.Mode == "Always" then
+			Keybind.Active = true;
+		elseif Keybind.Mode == "Hold" then
+			Keybind.Active = false;
+		end;
+
+		Library.Flags[ Flag ] = Keybind.Active;
+		Refresh();
+
+		if not Silent then
+			call( Params.Callback, Keybind.Active );
+			SyncLink();
+		end;
+	end;
+
+	function Keybind : SetValue( Key )
+		Keybind : Set( Key );
+	end;
+
+	function Keybind : SetMode( Mode )
+		Keybind : Set( Keybind.Key, Mode );
+	end;
+
+	local ModeSelector = modeSelector( Button, Keybind, function( ModeName )
+		Keybind : Set( Keybind.Key, ModeName );
+	end );
+
+	connect( Button.MouseButton1Click, function()
+		if Keybind.Listening then return end;
+
+		Keybind.Listening = true;
+		Refresh();
+
+		local Connection;
+
+		Connection = UserInputService.InputBegan : Connect( function( Input )
+			local Key;
+
+			if Input.UserInputType == Enum.UserInputType.Keyboard then
+				if Input.KeyCode == Enum.KeyCode.Escape or Input.KeyCode == Enum.KeyCode.Backspace then
+					Key = false;
+				else
+					Key = Input.KeyCode;
+				end;
+			elseif Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.MouseButton2 or Input.UserInputType == Enum.UserInputType.MouseButton3 then
+				Key = Input.UserInputType;
+			else
+				return;
+			end;
+
+			Connection : Disconnect();
+			Keybind.Listening = false;
+			Keybind : Set( Key or nil );
+		end );
+	end );
+
+	connect( Button.MouseButton2Click, function()
+		if Keybind.Listening then return end;
+		if ModeSelector.Open then ModeSelector.Close() else ModeSelector.Show(); end;
+	end );
+
+	table.insert( Library.Keybinds, Keybind );
+	Library.Options[ Flag ] = Keybind;
+	Keybind : Set( Params.Default, Params.Mode, true );
+
+	return Keybind;
+end;
+
+connect( UserInputService.InputBegan, function( Input, Processed )
+	if Processed then return end;
+
+	for _, Keybind in Library.Keybinds do
+		if Keybind.Key and not Keybind.Listening and ( Input.KeyCode == Keybind.Key or Input.UserInputType == Keybind.Key ) then
+			Keybind : Press( true );
+		end;
+	end;
+end );
+
+connect( UserInputService.InputEnded, function( Input )
+	for _, Keybind in Library.Keybinds do
+		if Keybind.Key and Keybind.Mode == "Hold" and ( Input.KeyCode == Keybind.Key or Input.UserInputType == Keybind.Key ) then
+			Keybind : Press( false );
+		end;
+	end;
+end );
+
+local function colorpicker( Parent, Params )
+	Params = Params or {};
+
+	local Picker = { H = 0; S = 1; V = 1; Color = White; Value = White; };
+	local Flag = Params.Flag or Params.Name or "Color";
+
+	local PopupWidth, PopupHeight = 200, 186;
+
+	local Swatch = Instance.new( "TextButton" );
+	Swatch.Size = UDim2.fromOffset( 26, 12 );
+	Swatch.BackgroundColor3 = White;
+	Swatch.AutoButtonColor = false;
+	Swatch.Text = "";
+	Swatch.BorderSizePixel = 0;
+	Swatch.Name = "\0";
+	Swatch.Parent = Parent;
+
+	strokes( Swatch, 2 );
+	gradient( Swatch, 255, 150, 90 );
+
+	local Popup = Instance.new( "Frame" );
+	Popup.Size = UDim2.fromOffset( PopupWidth, PopupHeight );
+	Popup.Visible = false;
+	Popup.ZIndex = 5;
+	Popup.BackgroundColor3 = Theme[ "Background" ];
+	Popup.BorderSizePixel = 0;
+	Popup.Name = "\0";
+	Popup.Parent = PopupGui;
+
+	strokes( Popup, 4 );
+
+	local Palette = Instance.new( "Frame" );
+	Palette.Position = UDim2.fromOffset( 10, 10 );
+	Palette.Size = UDim2.fromOffset( 152, 140 );
+	Palette.ZIndex = 6;
+	Palette.ClipsDescendants = true;
+	Palette.BackgroundColor3 = White;
+	Palette.BorderSizePixel = 0;
+	Palette.Name = "\0";
+	Palette.Parent = Popup;
+
+	strokes( Palette, 1 );
+
+	local Saturation = Instance.new( "Frame" );
+	Saturation.Size = UDim2.fromScale( 1, 1 );
+	Saturation.ZIndex = 7;
+	Saturation.BackgroundColor3 = White;
+	Saturation.BorderSizePixel = 0;
+	Saturation.Name = "\0";
+	Saturation.Parent = Palette;
+
+	local SatGrad = Instance.new( "UIGradient" );
+	SatGrad.Transparency = NumberSequence.new( { NumberSequenceKeypoint.new( 0, 0 ), NumberSequenceKeypoint.new( 1, 1 ) } );
+	SatGrad.Name = "\0";
+	SatGrad.Parent = Saturation;
+
+	local Value = Instance.new( "Frame" );
+	Value.Size = UDim2.fromScale( 1, 1 );
+	Value.ZIndex = 8;
+	Value.BackgroundColor3 = Black;
+	Value.BorderSizePixel = 0;
+	Value.Name = "\0";
+	Value.Parent = Palette;
+
+	local ValGrad = Instance.new( "UIGradient" );
+	ValGrad.Rotation = 90;
+	ValGrad.Transparency = NumberSequence.new( { NumberSequenceKeypoint.new( 0, 1 ), NumberSequenceKeypoint.new( 1, 0 ) } );
+	ValGrad.Name = "\0";
+	ValGrad.Parent = Value;
+
+	local PaletteCursor = Instance.new( "Frame" );
+	PaletteCursor.AnchorPoint = Vector2.new( 0.5, 0.5 );
+	PaletteCursor.Size = UDim2.fromOffset( 7, 7 );
+	PaletteCursor.ZIndex = 10;
+	PaletteCursor.BackgroundColor3 = White;
+	PaletteCursor.BorderSizePixel = 0;
+	PaletteCursor.Name = "\0";
+	PaletteCursor.Parent = Palette;
+
+	local PaletteCursorStroke = Instance.new( "UIStroke" );
+	PaletteCursorStroke.Color = Black;
+	PaletteCursorStroke.Thickness = 1;
+	PaletteCursorStroke.Name = "\0";
+	PaletteCursorStroke.Parent = PaletteCursor;
+
+	local PaletteHit = Instance.new( "TextButton" );
+	PaletteHit.Size = UDim2.fromScale( 1, 1 );
+	PaletteHit.ZIndex = 11;
+	PaletteHit.BackgroundTransparency = 1;
+	PaletteHit.Text = "";
+	PaletteHit.AutoButtonColor = false;
+	PaletteHit.BorderSizePixel = 0;
+	PaletteHit.Name = "\0";
+	PaletteHit.Parent = Palette;
+
+	local Hue = Instance.new( "Frame" );
+	Hue.Position = UDim2.fromOffset( 172, 10 );
+	Hue.Size = UDim2.fromOffset( 18, 140 );
+	Hue.ZIndex = 6;
+	Hue.BackgroundColor3 = White;
+	Hue.BorderSizePixel = 0;
+	Hue.Name = "\0";
+	Hue.Parent = Popup;
+
+	strokes( Hue, 1 );
+
+	local HueGrad = Instance.new( "UIGradient" );
+	HueGrad.Rotation = 90;
+	HueGrad.Color = ColorSequence.new( {
+		ColorSequenceKeypoint.new( 0, Color3.fromRGB( 255, 0, 0 ) );
+		ColorSequenceKeypoint.new( 0.17, Color3.fromRGB( 255, 255, 0 ) );
+		ColorSequenceKeypoint.new( 0.33, Color3.fromRGB( 0, 255, 0 ) );
+		ColorSequenceKeypoint.new( 0.5, Color3.fromRGB( 0, 255, 255 ) );
+		ColorSequenceKeypoint.new( 0.67, Color3.fromRGB( 0, 0, 255 ) );
+		ColorSequenceKeypoint.new( 0.83, Color3.fromRGB( 255, 0, 255 ) );
+		ColorSequenceKeypoint.new( 1, Color3.fromRGB( 255, 0, 0 ) );
+	} );
+	HueGrad.Name = "\0";
+	HueGrad.Parent = Hue;
+
+	local HueCursor = Instance.new( "Frame" );
+	HueCursor.AnchorPoint = Vector2.new( 0.5, 0.5 );
+	HueCursor.Position = UDim2.fromScale( 0.5, 0 );
+	HueCursor.Size = UDim2.new( 1, 4, 0, 3 );
+	HueCursor.ZIndex = 8;
+	HueCursor.BackgroundColor3 = White;
+	HueCursor.BorderSizePixel = 0;
+	HueCursor.Name = "\0";
+	HueCursor.Parent = Hue;
+
+	local HueCursorStroke = Instance.new( "UIStroke" );
+	HueCursorStroke.Color = Black;
+	HueCursorStroke.Thickness = 1;
+	HueCursorStroke.Name = "\0";
+	HueCursorStroke.Parent = HueCursor;
+
+	local HueHit = Instance.new( "TextButton" );
+	HueHit.Size = UDim2.fromScale( 1, 1 );
+	HueHit.ZIndex = 9;
+	HueHit.BackgroundTransparency = 1;
+	HueHit.Text = "";
+	HueHit.AutoButtonColor = false;
+	HueHit.BorderSizePixel = 0;
+	HueHit.Name = "\0";
+	HueHit.Parent = Hue;
+
+	local HexBackground = Instance.new( "Frame" );
+	HexBackground.Position = UDim2.fromOffset( 10, 158 );
+	HexBackground.Size = UDim2.fromOffset( 180, 18 );
+	HexBackground.ZIndex = 6;
+	HexBackground.BackgroundColor3 = Theme[ "Element" ];
+	HexBackground.BorderSizePixel = 0;
+	HexBackground.Name = "\0";
+	HexBackground.Parent = Popup;
+
+	strokes( HexBackground, 2 );
+	gradient( HexBackground, 255, 215 );
+
+	local Hex = Instance.new( "TextBox" );
+	Hex.FontFace = Library.BoldFont;
+	Hex.TextSize = Library.TextSize;
+	Hex.Position = UDim2.fromOffset( 6, 0 );
+	Hex.Size = UDim2.new( 1, -12, 1, 0 );
+	Hex.BackgroundTransparency = 1;
+	Hex.BorderSizePixel = 0;
+	Hex.ClearTextOnFocus = false;
+	Hex.TextXAlignment = Enum.TextXAlignment.Left;
+	Hex.TextColor3 = Theme[ "Text" ];
+	Hex.ZIndex = 7;
+	Hex.Text = "#FFFFFF";
+	Hex.Name = "\0";
+	Hex.Parent = HexBackground;
+
+	local function paint( Silent )
+		local Color = Color3.fromHSV( Picker.H, Picker.S, Picker.V );
+
+		Picker.Color = Color;
+		Picker.Value = Color;
+		Swatch.BackgroundColor3 = Color;
+		Palette.BackgroundColor3 = Color3.fromHSV( Picker.H, 1, 1 );
+		PaletteCursor.Position = UDim2.fromScale( Picker.S, 1 - Picker.V );
+		HueCursor.Position = UDim2.fromScale( 0.5, Picker.H );
+		Hex.Text = "#" .. Color : ToHex() : upper();
+
+		Library.Flags[ Flag ] = Color;
+
+		if Picker.OnChanged then
+			Picker.OnChanged( Color );
+		end;
+
+		if not Silent then
+			call( Params.Callback, Color );
+		end;
+	end;
+
+	function Picker : Set( Color, Silent )
+		if type( Color ) == "string" then
+			local Success, Result = pcall( Color3.fromHex, Color );
+			if not Success then return end;
+			Color = Result;
+		end;
+
+		if typeof( Color ) ~= "Color3" then return end;
+
+		Picker.H, Picker.S, Picker.V = Color : ToHSV();
+		paint( Silent );
+	end;
+
+	function Picker : SetValue( Color )
+		Picker : Set( Color );
+	end;
+
+	function Picker : Get() return Picker.Color; end;
+
+	drag( PaletteHit, function( Mouse )
+		local Position, Size = Palette.AbsolutePosition, Palette.AbsoluteSize;
+		Picker.S = math.clamp( ( Mouse.X - Position.X ) / Size.X, 0, 1 );
+		Picker.V = 1 - math.clamp( ( Mouse.Y - Position.Y ) / Size.Y, 0, 1 );
+		paint();
+	end );
+
+	drag( HueHit, function( Mouse )
+		local Position, Size = Hue.AbsolutePosition, Hue.AbsoluteSize;
+		Picker.H = math.clamp( ( Mouse.Y - Position.Y ) / Size.Y, 0, 0.999 );
+		paint();
+	end );
+
+	connect( Hex.FocusLost, function()
+		local Success, Result = pcall( Color3.fromHex, Hex.Text );
+		if Success then Picker : Set( Result ) else paint( true ) end;
+	end );
+
+	local Entry = { Open = false; Frame = Popup; Anchor = Swatch; };
+
+	function Entry.Close()
+		Entry.Open = false;
+		Popup.Visible = false;
+	end;
+
+	function Entry.Show()
+		closePopups( Entry );
+
+		local Viewport = workspace.CurrentCamera.ViewportSize;
+		local Raw = Swatch.AbsolutePosition - getOrigin();
+		local X = math.clamp( Raw.X, 6, math.max( Viewport.X - PopupWidth - 6, 6 ) );
+		local Y = Raw.Y + Swatch.AbsoluteSize.Y + 6;
+
+		if Y + PopupHeight > Viewport.Y - 6 then
+			Y = Raw.Y - PopupHeight - 6;
+		end;
+
+		Popup.Position = UDim2.fromOffset( X, Y );
+		Popup.Visible = true;
+		Entry.Open = true;
+	end;
+
+	table.insert( Library.Popups, Entry );
+
+	connect( Swatch.MouseButton1Click, function()
+		if Entry.Open then Entry.Close() else Entry.Show() end;
+	end );
+
+	Picker : Set( Params.Default or White, true );
+	Library.Options[ Flag ] = Picker;
+
+	return Picker;
+end;
+
+connect( UserInputService.InputBegan, function( Input )
+	if Input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end;
+
+	for _, Popup in Library.Popups do
+		if Popup.Open and not isOver( Popup.Frame ) and not isOver( Popup.Anchor ) then
+			Popup.Close();
+		end;
+	end;
+end );
+
+function Library : SetAccent( Color )
+	if typeof( Color ) ~= "Color3" then return end;
+
+	local Old = Theme[ "Accent" ];
+	Theme[ "Accent" ] = Color;
+
+	for _, Screen in { Gui, PopupGui, OverlayGui } do
+		for _, Desc in Screen : GetDescendants() do
+			if Desc : IsA( "GuiObject" ) then
+				if Desc.BackgroundColor3 == Old then Desc.BackgroundColor3 = Color; end;
+
+				if Desc : IsA( "TextLabel" ) or Desc : IsA( "TextButton" ) or Desc : IsA( "TextBox" ) then
+					if Desc.TextColor3 == Old then Desc.TextColor3 = Color; end;
+				end;
+			elseif Desc : IsA( "UIStroke" ) then
+				if Desc.Color == Old then Desc.Color = Color; end;
+			elseif Desc : IsA( "UIGradient" ) then
+				local Points = {};
+				local Changed = false;
+
+				for _, Keypoint in ipairs( Desc.Color.Keypoints ) do
+					if Keypoint.Value == Old then
+						table.insert( Points, ColorSequenceKeypoint.new( Keypoint.Time, Color ) );
+						Changed = true;
+					else
+						table.insert( Points, Keypoint );
+					end;
+				end;
+
+				if Changed then
+					Desc.Color = ColorSequence.new( Points );
+				end;
+			end;
+		end;
+	end;
+end;
+
+-- HUD removed; function kept as a no-op so existing calls still work.
+function Library : RefreshKeybindHud() end;
+
+local Elements = {};
+
+local function rightHolder( Row )
+	local Holder = Instance.new( "Frame" );
+	Holder.AnchorPoint = Vector2.new( 1, 0 );
+	Holder.Position = UDim2.new( 1, 0, 0, 0 );
+	Holder.Size = UDim2.new( 0, 0, 1, 0 );
+	Holder.AutomaticSize = Enum.AutomaticSize.X;
+	Holder.BackgroundTransparency = 1;
+	Holder.BorderSizePixel = 0;
+	Holder.Name = "\0";
+	Holder.Parent = Row;
+
+	local Layout = Instance.new( "UIListLayout" );
+	Layout.FillDirection = Enum.FillDirection.Horizontal;
+	Layout.HorizontalAlignment = Enum.HorizontalAlignment.Right;
+	Layout.VerticalAlignment = Enum.VerticalAlignment.Center;
+	Layout.Padding = UDim.new( 0, 8 );
+	Layout.SortOrder = Enum.SortOrder.LayoutOrder;
+	Layout.Name = "\0";
+	Layout.Parent = Holder;
+
+	return Holder;
+end;
+
+local function field( Parent, Height, Order )
+	local Object = Instance.new( "Frame" );
+	Object.Size = UDim2.new( 1, 0, 0, Height );
+	Object.LayoutOrder = Order or 0;
+	Object.BackgroundColor3 = Theme[ "Element" ];
+	Object.BorderSizePixel = 0;
+	Object.Name = "\0";
+	Object.Parent = Parent;
+
+	strokes( Object, 2 );
+	gradient( Object, 255, 215 );
+
+	return Object;
+end;
+
+local function arrow( Parent, Position )
+	local Holder = Instance.new( "Frame" );
+	Holder.AnchorPoint = Vector2.new( 0.5, 0.5 );
+	Holder.Position = Position;
+	Holder.Size = UDim2.fromOffset( 7, 4 );
+	Holder.BackgroundTransparency = 1;
+	Holder.BorderSizePixel = 0;
+	Holder.Name = "\0";
+	Holder.Parent = Parent;
+
+	local Bars = {};
+
+	for Index = 0, 3 do
+		local Bar = Instance.new( "Frame" );
+		Bar.AnchorPoint = Vector2.new( 0.5, 0 );
+		Bar.Position = UDim2.new( 0.5, 0, 0, Index );
+		Bar.Size = UDim2.fromOffset( 7 - Index * 2, 1 );
+		Bar.BackgroundColor3 = Theme[ "Dim" ];
+		Bar.BorderSizePixel = 0;
+		Bar.Name = "\0";
+		Bar.Parent = Holder;
+		table.insert( Bars, Bar );
+	end;
+
+	return Holder, Bars;
+end;
+
+local function title( Parent, Text, Order )
+	local Title = Instance.new( "TextLabel" );
+	Title.FontFace = Library.BoldFont;
+	Title.Text = Text;
+	Title.TextSize = Library.TextSize;
+	Title.TextColor3 = Theme[ "Text" ];
+	Title.BackgroundTransparency = 1;
+	Title.BorderSizePixel = 0;
+	Title.Size = UDim2.new( 1, 0, 0, 14 );
+	Title.LayoutOrder = Order or 1;
+	Title.TextXAlignment = Enum.TextXAlignment.Left;
+	Title.Name = "\0";
+	Title.Parent = Parent;
+
+	textStroke( Title );
+
+	return Title;
+end;
+
+local function listboxFrame( Parent )
+	local Box = Instance.new( "Frame" );
+	Box.BackgroundTransparency = 1;
+	Box.Size = UDim2.new( 1, 0, 0, 0 );
+	Box.AutomaticSize = Enum.AutomaticSize.Y;
+	Box.BorderSizePixel = 0;
+	Box.Name = "\0";
+	Box.Parent = Parent;
+
+	local BoxList = Instance.new( "UIListLayout" );
+	BoxList.Padding = UDim.new( 0, 3 );
+	BoxList.SortOrder = Enum.SortOrder.LayoutOrder;
+	BoxList.Name = "\0";
+	BoxList.Parent = Box;
+
+	return Box;
+end;
+
+function Elements : Label( Text )
+	local Row = Instance.new( "Frame" );
+	Row.BackgroundTransparency = 1;
+	Row.Size = UDim2.new( 1, 0, 0, 16 );
+	Row.AutomaticSize = Enum.AutomaticSize.Y;
+	Row.BorderSizePixel = 0;
+	Row.Name = "\0";
+	Row.Parent = self.Holder;
+
+	local Label = Instance.new( "TextLabel" );
+	Label.FontFace = Library.BoldFont;
+	Label.Text = Text;
+	Label.TextSize = Library.TextSize;
+	Label.TextColor3 = Theme[ "Text" ];
+	Label.BackgroundTransparency = 1;
+	Label.BorderSizePixel = 0;
+	Label.Size = UDim2.new( 1, 0, 0, 16 );
+	Label.AutomaticSize = Enum.AutomaticSize.Y;
+	Label.TextWrapped = true;
+	Label.TextXAlignment = Enum.TextXAlignment.Left;
+	Label.Name = "\0";
+	Label.Parent = Row;
+
+	textStroke( Label );
+
+	local Right = rightHolder( Row );
+
+	local Object = {};
+
+	function Object : SetText( NewText ) Label.Text = tostring( NewText ); end;
+	function Object : Colorpicker( Params ) return colorpicker( Right, Params ); end;
+	function Object : Keybind( Params ) return keybind( Right, Params ); end;
+
+	return Object;
+end;
+
+function Elements : Keybind( Params )
+	Params = Params or {};
+
+	local Row = Instance.new( "Frame" );
+	Row.BackgroundTransparency = 1;
+	Row.Size = UDim2.new( 1, 0, 0, 16 );
+	Row.BorderSizePixel = 0;
+	Row.Name = "\0";
+	Row.Parent = self.Holder;
+
+	if Params.Name then
+		local Label = Instance.new( "TextLabel" );
+		Label.FontFace = Library.BoldFont;
+		Label.Text = Params.Name;
+		Label.TextSize = Library.TextSize;
+		Label.TextColor3 = Theme[ "Text" ];
+		Label.BackgroundTransparency = 1;
+		Label.BorderSizePixel = 0;
+		Label.Size = UDim2.new( 1, 0, 1, 0 );
+		Label.TextXAlignment = Enum.TextXAlignment.Left;
+		Label.Name = "\0";
+		Label.Parent = Row;
+
+		textStroke( Label );
+	end
+
+	local Right = rightHolder( Row );
+
+	return keybind( Right, Params );
+end;
+
+function Elements : Toggle( Params )
+	Params = Params or {};
+
+	local Toggle = { Value = false; };
+	local Flag = Params.Flag or Params.Name or "Toggle";
+	local Hovered = false;
+
+	local Button = Instance.new( "TextButton" );
+	Button.BackgroundTransparency = 1;
+	Button.BorderSizePixel = 0;
+	Button.AutoButtonColor = false;
+	Button.Text = "";
+	Button.Size = UDim2.new( 1, 0, 0, 16 );
+	Button.Name = "\0";
+	Button.Parent = self.Holder;
+
+	local Box = Instance.new( "Frame" );
+	Box.Position = UDim2.new( 0, 0, 0.5, -7 );
+	Box.Size = UDim2.fromOffset( 14, 14 );
+	Box.BackgroundColor3 = Theme[ "Off" ];
+	Box.BorderSizePixel = 0;
+	Box.Name = "\0";
+	Box.Parent = Button;
+
+	strokes( Box, 2 );
+	gradient( Box, 255, 195 );
+
+	local Fill = Instance.new( "Frame" );
+	Fill.AnchorPoint = Vector2.new( 0.5, 0.5 );
+	Fill.Position = UDim2.fromScale( 0.5, 0.5 );
+	Fill.Size = UDim2.fromScale( 0.2, 0.2 );
+	Fill.BackgroundTransparency = 1;
+	Fill.BackgroundColor3 = Theme[ "Accent" ];
+	Fill.BorderSizePixel = 0;
+	Fill.Name = "\0";
+	Fill.Parent = Box;
+
+	accentGradient( Fill, 90 );
+
+	local Label = Instance.new( "TextLabel" );
+	Label.FontFace = Library.BoldFont;
+	Label.Text = Params.Name or "Toggle";
+	Label.TextSize = Library.TextSize;
+	Label.TextColor3 = Theme[ "Dimmer" ];
+	Label.BackgroundTransparency = 1;
+	Label.BorderSizePixel = 0;
+	Label.Position = UDim2.new( 0, 20, 0, 0 );
+	Label.Size = UDim2.new( 0, 0, 1, 0 );
+	Label.AutomaticSize = Enum.AutomaticSize.X;
+	Label.TextXAlignment = Enum.TextXAlignment.Left;
+	Label.Name = "\0";
+	Label.Parent = Button;
+
+	textStroke( Label );
+
+	local Right = rightHolder( Button );
+
+	local FillTween, LabelTween, BoxTween;
+
+	local function UpdateLabel()
+		if LabelTween then LabelTween : Cancel(); end;
+
+		local Target = Theme[ "Dimmer" ];
+		if Toggle.Value then
+			Target = Theme[ "Text" ];
+		elseif Hovered then
+			Target = Theme[ "Dim" ];
+		end;
+
+		LabelTween = tween( Label, { TextColor3 = Target }, 0.2 );
+	end;
+
+	function Toggle : Set( Bool, Silent )
+		Bool = Bool and true or false;
+		Toggle.Value = Bool;
+		Library.Flags[ Flag ] = Bool;
+
+		if FillTween then FillTween : Cancel(); end;
+
+		FillTween = tween( Fill, {
+			BackgroundTransparency = Bool and 0 or 1;
+			Size = Bool and UDim2.fromScale( 1, 1 ) or UDim2.fromScale( 0.2, 0.2 );
+		}, 0.28 );
+
+		UpdateLabel();
+
+		if Toggle.LinkedKeybind and Toggle.LinkedKeybind.Mode == "Toggle" then
+			Toggle.LinkedKeybind : SetActive( Bool );
+		end;
+
+		if not Silent then
+			call( Params.Callback, Bool );
+		end;
+	end;
+
+	function Toggle : SetValue( Bool )
+		Toggle : Set( Bool, true );
+	end;
+
+	function Toggle : Get() return Toggle.Value; end;
+	function Toggle : SetText( NewText ) Label.Text = tostring( NewText ); end;
+	function Toggle : Colorpicker( Data ) return colorpicker( Right, Data ); end;
+
+	function Toggle : Keybind( Data )
+		Data = Data or {};
+		Data.Link = Toggle;
+		Data.Name = Data.Name or Params.Name;
+
+		local Keybind = keybind( Right, Data );
+		Toggle.LinkedKeybind = Keybind;
+
+		if Keybind.Mode == "Toggle" then
+			Keybind : SetActive( Toggle.Value );
+		end;
+
+		return Keybind;
+	end;
+
+	connect( Button.MouseEnter, function()
+		Hovered = true;
+		if BoxTween then BoxTween : Cancel(); end;
+		BoxTween = tween( Box, { BackgroundColor3 = Theme[ "Hover" ] }, 0.18 );
+		UpdateLabel();
+	end );
+
+	connect( Button.MouseLeave, function()
+		Hovered = false;
+		if BoxTween then BoxTween : Cancel(); end;
+		BoxTween = tween( Box, { BackgroundColor3 = Theme[ "Off" ] }, 0.18 );
+		UpdateLabel();
+	end );
+
+	connect( Button.MouseButton1Down, function()
+		Toggle : Set( not Toggle.Value );
+	end );
+
+	Toggle : Set( Params.Default or false, Params.Silent );
+	Library.Toggles[ Flag ] = Toggle;
+
+	return Toggle;
+end;
+
+function Elements : Button( Params )
+	Params = Params or {};
+
+	local Button = Instance.new( "TextButton" );
+	Button.Size = UDim2.new( 1, 0, 0, 20 );
+	Button.BackgroundColor3 = Theme[ "Element" ];
+	Button.BorderSizePixel = 0;
+	Button.AutoButtonColor = false;
+	Button.Text = "";
+	Button.Name = "\0";
+	Button.Parent = self.Holder;
+
+	strokes( Button, 2 );
+	gradient( Button, 255, 215 );
+
+	local Label = Instance.new( "TextLabel" );
+	Label.FontFace = Library.BoldFont;
+	Label.Text = Params.Name or "Button";
+	Label.TextSize = Library.TextSize;
+	Label.TextColor3 = Theme[ "Text" ];
+	Label.BackgroundTransparency = 1;
+	Label.BorderSizePixel = 0;
+	Label.Size = UDim2.fromScale( 1, 1 );
+	Label.TextXAlignment = Enum.TextXAlignment.Center;
+	Label.Name = "\0";
+	Label.Parent = Button;
+
+	textStroke( Label );
+
+	local Flag = Params.Flag or Params.Name or "Button";
+	Library.Options[ Flag ] = Button;
+
+	connect( Button.MouseEnter, function() tween( Button, { BackgroundColor3 = Theme[ "Hover" ] }, 0.15 ); end );
+	connect( Button.MouseLeave, function() tween( Button, { BackgroundColor3 = Theme[ "Element" ] }, 0.15 ); end );
+
+	connect( Button.MouseButton1Down, function()
+		Label.TextColor3 = Theme[ "Accent" ];
+		tween( Label, { TextColor3 = Theme[ "Text" ] }, 0.4 );
+		Library.Flags[ Flag ] = true;
+		call( Params.Callback );
+	end );
+
+	return Button;
+end;
+
+function Elements : Slider( Params )
+	Params = Params or {};
+
+	local Slider = { Value = 0; };
+	local Flag = Params.Flag or Params.Name or "Slider";
+	local Min, Max, Step = Params.Min or 0, Params.Max or 100, Params.Step or 1;
+	local Suffix = Params.Suffix or "";
+	local StepText = tostring( Step );
+	local Decimals = StepText : find( "%." ) and ( #StepText - StepText : find( "%." ) ) or 0;
+
+	local Row = Instance.new( "Frame" );
+	Row.BackgroundTransparency = 1;
+	Row.Size = UDim2.new( 1, 0, 0, 28 );
+	Row.BorderSizePixel = 0;
+	Row.Name = "\0";
+	Row.Parent = self.Holder;
+
+	local Title = Instance.new( "TextLabel" );
+	Title.FontFace = Library.BoldFont;
+	Title.Text = Params.Name or "Slider";
+	Title.TextSize = Library.TextSize;
+	Title.TextColor3 = Theme[ "Text" ];
+	Title.BackgroundTransparency = 1;
+	Title.BorderSizePixel = 0;
+	Title.Size = UDim2.new( 0.6, 0, 0, 15 );
+	Title.TextXAlignment = Enum.TextXAlignment.Left;
+	Title.Name = "\0";
+	Title.Parent = Row;
+
+	textStroke( Title );
+
+	local Value = Instance.new( "TextLabel" );
+	Value.FontFace = Library.Font;
+	Value.Text = "";
+	Value.TextSize = Library.TextSize;
+	Value.TextColor3 = Theme[ "Dim" ];
+	Value.BackgroundTransparency = 1;
+	Value.BorderSizePixel = 0;
+	Value.AnchorPoint = Vector2.new( 1, 0 );
+	Value.Position = UDim2.new( 1, 0, 0, 0 );
+	Value.Size = UDim2.new( 0.4, 0, 0, 15 );
+	Value.TextXAlignment = Enum.TextXAlignment.Right;
+	Value.Name = "\0";
+	Value.Parent = Row;
+
+	textStroke( Value );
+
+	local Track = Instance.new( "Frame" );
+	Track.Position = UDim2.new( 0, 0, 0, 16 );
+	Track.Size = UDim2.new( 1, 0, 0, 12 );
+	Track.BackgroundColor3 = Theme[ "Element" ];
+	Track.BorderSizePixel = 0;
+	Track.Name = "\0";
+	Track.Parent = Row;
+
+	strokes( Track, 2 );
+	gradient( Track, 255, 205 );
+
+	local Fill = Instance.new( "Frame" );
+	Fill.Size = UDim2.fromScale( 0, 1 );
+	Fill.BackgroundColor3 = Theme[ "Accent" ];
+	Fill.BorderSizePixel = 0;
+	Fill.Name = "\0";
+	Fill.Parent = Track;
+
+	accentGradient( Fill, 90 );
+
+	local Hit = Instance.new( "TextButton" );
+	Hit.BackgroundTransparency = 1;
+	Hit.Position = UDim2.new( 0, 0, 0, -3 );
+	Hit.Size = UDim2.new( 1, 0, 1, 6 );
+	Hit.AutoButtonColor = false;
+	Hit.Text = "";
+	Hit.BorderSizePixel = 0;
+	Hit.Name = "\0";
+	Hit.Parent = Track;
+
+	local FillTween;
+
+	function Slider : Set( NewValue, Silent )
+		NewValue = math.clamp( tonumber( NewValue ) or Min, Min, Max );
+		NewValue = math.floor( NewValue / Step + 0.5 ) * Step;
+		NewValue = tonumber( string.format( "%." .. Decimals .. "f", NewValue ) );
+
+		Slider.Value = NewValue;
+		Library.Flags[ Flag ] = NewValue;
+
+		local Alpha = ( Max - Min ) == 0 and 0 or ( NewValue - Min ) / ( Max - Min );
+
+		if FillTween then FillTween : Cancel(); end;
+
+		FillTween = tween( Fill, { Size = UDim2.fromScale( Alpha, 1 ) }, 0.12, Enum.EasingStyle.Quad );
+		Value.Text = string.format( "%." .. Decimals .. "f", NewValue ) .. Suffix;
+
+		if not Silent then
+			call( Params.Callback, NewValue );
+		end;
+	end;
+
+	function Slider : SetValue( NewValue )
+		Slider : Set( NewValue );
+	end;
+
+	function Slider : Get() return Slider.Value; end;
+
+	drag( Hit, function( Mouse )
+		local Position, Size = Track.AbsolutePosition, Track.AbsoluteSize;
+		local Alpha = math.clamp( ( Mouse.X - Position.X ) / Size.X, 0, 1 );
+		Slider : Set( Min + ( Max - Min ) * Alpha );
+	end, function( Active )
+		tween( Value, { TextColor3 = Active and Theme[ "Text" ] or Theme[ "Dim" ] }, 0.2 );
+	end );
+
+	Slider : Set( Params.Default or Min, Params.Silent );
+	Library.Options[ Flag ] = Slider;
+
+	return Slider;
+end;
+
+function Elements : Dropdown( Params )
+	Params = Params or {};
+
+	local Dropdown = { Items = {}; Multi = Params.Multi and true or false; Buttons = {}; };
+	Dropdown.Value = Dropdown.Multi and {} or nil;
+
+	local Flag = Params.Flag or Params.Name or "Dropdown";
+
+	local Box = listboxFrame( self.Holder );
+
+	title( Box, Params.Name or "Dropdown", 1 );
+
+	local Button = Instance.new( "TextButton" );
+	Button.Size = UDim2.new( 1, 0, 0, 18 );
+	Button.LayoutOrder = 2;
+	Button.BackgroundColor3 = Theme[ "Element" ];
+	Button.BorderSizePixel = 0;
+	Button.AutoButtonColor = false;
+	Button.Text = "";
+	Button.Name = "\0";
+	Button.Parent = Box;
+
+	strokes( Button, 2 );
+	gradient( Button, 255, 215 );
+
+	local Display = Instance.new( "TextLabel" );
+	Display.FontFace = Library.Font;
+	Display.Text = "None";
+	Display.TextSize = Library.TextSize;
+	Display.TextColor3 = Theme[ "Dim" ];
+	Display.BackgroundTransparency = 1;
+	Display.BorderSizePixel = 0;
+	Display.Position = UDim2.fromOffset( 6, 0 );
+	Display.Size = UDim2.new( 1, -22, 1, 0 );
+	Display.TextTruncate = Enum.TextTruncate.AtEnd;
+	Display.TextXAlignment = Enum.TextXAlignment.Left;
+	Display.Name = "\0";
+	Display.Parent = Button;
+
+	textStroke( Display );
+
+	local Arrow, ArrowBars = arrow( Button, UDim2.new( 1, -11, 0.5, 0 ) );
+
+	local function paintArrow( Color )
+		for _, Bar in ArrowBars do
+			tween( Bar, { BackgroundColor3 = Color }, 0.2 );
+		end;
+	end;
+
+	local List = Instance.new( "ScrollingFrame" );
+	List.Size = UDim2.new( 1, 0, 0, 0 );
+	List.LayoutOrder = 3;
+	List.Visible = false;
+	List.ClipsDescendants = true;
+	List.ScrollBarThickness = 2;
+	List.ScrollBarImageColor3 = Theme[ "Accent" ];
+	List.CanvasSize = UDim2.new();
+	List.AutomaticCanvasSize = Enum.AutomaticSize.Y;
+	List.BackgroundColor3 = Theme[ "Container" ];
+	List.BorderSizePixel = 0;
+	List.Name = "\0";
+	List.Parent = Box;
+
+	strokes( List, 2 );
+
+	local ListLayout = Instance.new( "UIListLayout" );
+	ListLayout.Padding = UDim.new( 0, 1 );
+	ListLayout.SortOrder = Enum.SortOrder.LayoutOrder;
+	ListLayout.Name = "\0";
+	ListLayout.Parent = List;
+
+	local ListPad = Instance.new( "UIPadding" );
+	ListPad.PaddingTop = UDim.new( 0, 3 );
+	ListPad.PaddingBottom = UDim.new( 0, 3 );
+	ListPad.PaddingLeft = UDim.new( 0, 3 );
+	ListPad.PaddingRight = UDim.new( 0, 3 );
+	ListPad.Name = "\0";
+	ListPad.Parent = List;
+
+	local function IsSelected( Name )
+		if Dropdown.Multi then
+			return table.find( Dropdown.Value, Name ) ~= nil;
+		end;
+		return Dropdown.Value == Name;
+	end;
+
+	local function paint()
+		for Name, Data in Dropdown.Buttons do
+			tween( Data.Label, { TextColor3 = IsSelected( Name ) and Theme[ "Accent" ] or Theme[ "Dim" ] }, 0.15 );
+		end;
+
+		local Has;
+
+		if Dropdown.Multi then
+			Has = #Dropdown.Value > 0;
+			Display.Text = Has and table.concat( Dropdown.Value, ", " ) or "None";
+		else
+			Has = Dropdown.Value ~= nil;
+			Display.Text = Dropdown.Value or "None";
+		end;
+
+		tween( Display, { TextColor3 = Has and Theme[ "Text" ] or Theme[ "Dim" ] }, 0.15 );
+	end;
+
+	local Open = false;
+
+	local function SetOpen( Bool )
+		Open = Bool;
+		local Height = math.min( #Dropdown.Items * 19 + 6, 120 );
+
+		if Bool then
+			List.Visible = true;
+			tween( List, { Size = UDim2.new( 1, 0, 0, Height ) }, 0.22 );
+		else
+			local Closing = tween( List, { Size = UDim2.new( 1, 0, 0, 0 ) }, 0.18 );
+			Closing.Completed : Once( function()
+				if not Open then List.Visible = false; end;
+			end );
+		end;
+
+		tween( Arrow, { Rotation = Bool and 180 or 0 }, 0.2 );
+		paintArrow( Bool and Theme[ "Accent" ] or Theme[ "Dim" ] );
+	end;
+
+	function Dropdown : Set( NewValue, Silent )
+		if Dropdown.Multi then
+			Dropdown.Value = type( NewValue ) == "table" and table.clone( NewValue ) or {};
+		elseif NewValue ~= nil and table.find( Dropdown.Items, NewValue ) then
+			Dropdown.Value = NewValue;
+		end;
+
+		Library.Flags[ Flag ] = Dropdown.Value;
+		paint();
+
+		if not Silent then
+			call( Params.Callback, Dropdown.Value );
+		end;
+	end;
+
+	function Dropdown : SetValue( NewValue )
+		Dropdown : Set( NewValue );
+	end;
+
+	function Dropdown : Get() return Dropdown.Value; end;
+
+	function Dropdown : Refresh( Items )
+		for _, Data in Dropdown.Buttons do
+			Data.Button : Destroy();
+		end;
+
+		Dropdown.Buttons, Dropdown.Items = {}, Items or {};
+
+		for Index, Name in Dropdown.Items do
+			local Option = Instance.new( "TextButton" );
+			Option.Size = UDim2.new( 1, 0, 0, 18 );
+			Option.BackgroundTransparency = 1;
+			Option.LayoutOrder = Index;
+			Option.BorderSizePixel = 0;
+			Option.AutoButtonColor = false;
+			Option.Text = "";
+			Option.Name = "\0";
+			Option.Parent = List;
+
+			local Label = Instance.new( "TextLabel" );
+			Label.FontFace = Library.BoldFont;
+			Label.Text = tostring( Name );
+			Label.TextSize = Library.TextSize;
+			Label.TextColor3 = Theme[ "Dim" ];
+			Label.BackgroundTransparency = 1;
+			Label.BorderSizePixel = 0;
+			Label.Position = UDim2.fromOffset( 4, 0 );
+			Label.Size = UDim2.new( 1, -4, 1, 0 );
+			Label.TextXAlignment = Enum.TextXAlignment.Left;
+			Label.Name = "\0";
+			Label.Parent = Option;
+
+			textStroke( Label );
+
+			local Nudge = Instance.new( "UIPadding" );
+			Nudge.PaddingLeft = UDim.new( 0, 0 );
+			Nudge.Name = "\0";
+			Nudge.Parent = Option;
+
+			Dropdown.Buttons[ Name ] = { Button = Option; Label = Label; };
+
+			connect( Option.MouseEnter, function()
+				tween( Nudge, { PaddingLeft = UDim.new( 0, 5 ) }, 0.18 );
+				if not IsSelected( Name ) then
+					tween( Label, { TextColor3 = Theme[ "Text" ] }, 0.15 );
+				end;
+			end );
+
+			connect( Option.MouseLeave, function()
+				tween( Nudge, { PaddingLeft = UDim.new( 0, 0 ) }, 0.18 );
+				if not IsSelected( Name ) then
+					tween( Label, { TextColor3 = Theme[ "Dim" ] }, 0.15 );
+				end;
+			end );
+
+			connect( Option.MouseButton1Click, function()
+				if Dropdown.Multi then
+					local At = table.find( Dropdown.Value, Name );
+					if At then table.remove( Dropdown.Value, At ) else table.insert( Dropdown.Value, Name ); end;
+					Library.Flags[ Flag ] = Dropdown.Value;
+					paint();
+					call( Params.Callback, Dropdown.Value );
+				else
+					Dropdown : Set( Name );
+					SetOpen( false );
+				end;
+			end );
+		end;
+
+		if Dropdown.Multi then
+			for Index = #Dropdown.Value, 1, -1 do
+				if not table.find( Dropdown.Items, Dropdown.Value[ Index ] ) then
+					table.remove( Dropdown.Value, Index );
+				end;
+			end;
+		elseif Dropdown.Value and not table.find( Dropdown.Items, Dropdown.Value ) then
+			Dropdown.Value = nil;
+		end;
+
+		paint();
+
+		if Open then SetOpen( true ); end;
+	end;
+
+	connect( Button.MouseEnter, function() tween( Button, { BackgroundColor3 = Theme[ "Hover" ] }, 0.15 ); end );
+	connect( Button.MouseLeave, function() tween( Button, { BackgroundColor3 = Theme[ "Element" ] }, 0.15 ); end );
+	connect( Button.MouseButton1Click, function() SetOpen( not Open ); end );
+
+	Dropdown : Refresh( Params.Items );
+
+	if Params.Default ~= nil then
+		Dropdown : Set( Params.Default, Params.Silent );
+	end;
+
+	Library.Options[ Flag ] = Dropdown;
+
+	return Dropdown;
+end;
+
+function Elements : Textbox( Params )
+	Params = Params or {};
+
+	local Textbox = { Value = ""; };
+	local Flag = Params.Flag or Params.Name or "Textbox";
+
+	local Box = listboxFrame( self.Holder );
+
+	if Params.Name then
+		title( Box, Params.Name, 1 );
+	end;
+
+	local Background = field( Box, 17, 2 );
+
+	local Input = Instance.new( "TextBox" );
+	Input.FontFace = Library.Font;
+	Input.TextSize = Library.TextSize - 1;
+	Input.Position = UDim2.fromOffset( 6, 0 );
+	Input.Size = UDim2.new( 1, -12, 1, 0 );
+	Input.BackgroundTransparency = 1;
+	Input.BorderSizePixel = 0;
+	Input.ClearTextOnFocus = false;
+	Input.TextXAlignment = Enum.TextXAlignment.Left;
+	Input.TextColor3 = Theme[ "Text" ];
+	Input.PlaceholderColor3 = Theme[ "Dimmer" ];
+	Input.PlaceholderText = Params.Placeholder or "";
+	Input.Text = "";
+	Input.Name = "\0";
+	Input.Parent = Background;
+
+	function Textbox : Set( NewValue, Silent )
+		NewValue = tostring( NewValue or "" );
+
+		if Params.Numeric and NewValue ~= "" and not tonumber( NewValue ) then
+			NewValue = Textbox.Value;
+		end;
+
+		Textbox.Value = NewValue;
+		Input.Text = NewValue;
+		Library.Flags[ Flag ] = NewValue;
+
+		if not Silent then
+			call( Params.Callback, NewValue );
+		end;
+	end;
+
+	function Textbox : SetValue( NewValue )
+		Textbox : Set( NewValue );
+	end;
+
+	function Textbox : Get() return Textbox.Value; end;
+
+	if Params.Finished then
+		connect( Input.FocusLost, function() Textbox : Set( Input.Text ); end );
+	else
+		connect( Input : GetPropertyChangedSignal( "Text" ), function()
+			if Input.Text ~= Textbox.Value then Textbox : Set( Input.Text ); end;
+		end );
+	end;
+
+	connect( Input.Focused, function() tween( Background, { BackgroundColor3 = Theme[ "Hover" ] }, 0.15 ); end );
+	connect( Input.FocusLost, function() tween( Background, { BackgroundColor3 = Theme[ "Element" ] }, 0.15 ); end );
+
+	Textbox : Set( Params.Default or "", true );
+	Library.Options[ Flag ] = Textbox;
+
+	return Textbox;
+end;
+
+function Elements : Listbox( Params )
+	Params = Params or {};
+
+	local Listbox = { Items = {}; Multi = Params.Multi and true or false; Buttons = {}; };
+	Listbox.Value = Listbox.Multi and {} or nil;
+
+	local Flag = Params.Flag or Params.Name or "Listbox";
+
+	local Box = listboxFrame( self.Holder );
+
+	if Params.Name then
+		title( Box, Params.Name, 1 );
+	end;
+
+	local Background = Instance.new( "Frame" );
+	Background.Size = UDim2.new( 1, 0, 0, Params.Height or 150 );
+	Background.LayoutOrder = 2;
+	Background.BackgroundColor3 = Theme[ "Container" ];
+	Background.BorderSizePixel = 0;
+	Background.Name = "\0";
+	Background.Parent = Box;
+
+	strokes( Background, 2 );
+	gradient( Background, 255, 232 );
+
+	local List = Instance.new( "ScrollingFrame" );
+	List.Position = UDim2.fromOffset( 0, 2 );
+	List.Size = UDim2.new( 1, 0, 1, -4 );
+	List.BackgroundTransparency = 1;
+	List.BorderSizePixel = 0;
+	List.ScrollBarThickness = 2;
+	List.ScrollBarImageColor3 = Theme[ "Accent" ];
+	List.CanvasSize = UDim2.new();
+	List.AutomaticCanvasSize = Enum.AutomaticSize.Y;
+	List.Name = "\0";
+	List.Parent = Background;
+
+	local ListLayout = Instance.new( "UIListLayout" );
+	ListLayout.Padding = UDim.new( 0, 1 );
+	ListLayout.SortOrder = Enum.SortOrder.LayoutOrder;
+	ListLayout.Name = "\0";
+	ListLayout.Parent = List;
+
+	local function IsSelected( Name )
+		if Listbox.Multi then
+			return table.find( Listbox.Value, Name ) ~= nil;
+		end;
+		return Listbox.Value == Name;
+	end;
+
+	local function paint()
+		for Name, Data in Listbox.Buttons do
+			tween( Data.Label, { TextColor3 = IsSelected( Name ) and Theme[ "Accent" ] or Theme[ "Text" ] }, 0.15 );
+		end;
+	end;
+
+	function Listbox : Set( NewValue, Silent )
+		if Listbox.Multi then
+			Listbox.Value = type( NewValue ) == "table" and table.clone( NewValue ) or {};
+		elseif NewValue ~= nil and table.find( Listbox.Items, NewValue ) then
+			Listbox.Value = NewValue;
+		end;
+
+		Library.Flags[ Flag ] = Listbox.Value;
+		paint();
+
+		if not Silent then
+			call( Params.Callback, Listbox.Value );
+		end;
+	end;
+
+	function Listbox : SetValue( NewValue )
+		Listbox : Set( NewValue );
+	end;
+
+	function Listbox : Get() return Listbox.Value; end;
+
+	function Listbox : Refresh( Items )
+		for _, Data in Listbox.Buttons do
+			Data.Button : Destroy();
+		end;
+
+		Listbox.Buttons, Listbox.Items = {}, Items or {};
+
+		for Index, Name in Listbox.Items do
+			local Option = Instance.new( "TextButton" );
+			Option.Size = UDim2.new( 1, 0, 0, 18 );
+			Option.BackgroundTransparency = 1;
+			Option.LayoutOrder = Index;
+			Option.BorderSizePixel = 0;
+			Option.AutoButtonColor = false;
+			Option.Text = "";
+			Option.Name = "\0";
+			Option.Parent = List;
+
+			local Label = Instance.new( "TextLabel" );
+			Label.FontFace = Library.BoldFont;
+			Label.Text = tostring( Name );
+			Label.TextSize = Library.TextSize;
+			Label.TextColor3 = Theme[ "Text" ];
+			Label.BackgroundTransparency = 1;
+			Label.BorderSizePixel = 0;
+			Label.Size = UDim2.fromScale( 1, 1 );
+			Label.TextXAlignment = Enum.TextXAlignment.Center;
+			Label.Name = "\0";
+			Label.Parent = Option;
+
+			textStroke( Label );
+
+			Listbox.Buttons[ Name ] = { Button = Option; Label = Label; };
+
+			connect( Option.MouseEnter, function()
+				if not IsSelected( Name ) then tween( Label, { TextColor3 = Theme[ "Dim" ] }, 0.15 ); end;
+			end );
+
+			connect( Option.MouseLeave, function()
+				if not IsSelected( Name ) then tween( Label, { TextColor3 = Theme[ "Text" ] }, 0.15 ); end;
+			end );
+
+			connect( Option.MouseButton1Click, function()
+				if Listbox.Multi then
+					local At = table.find( Listbox.Value, Name );
+					if At then table.remove( Listbox.Value, At ) else table.insert( Listbox.Value, Name ); end;
+					Library.Flags[ Flag ] = Listbox.Value;
+					paint();
+					call( Params.Callback, Listbox.Value );
+				else
+					Listbox : Set( Name );
+				end;
+			end );
+		end;
+
+		paint();
+	end;
+
+	Listbox : Refresh( Params.Items );
+
+	if Params.Default ~= nil then
+		Listbox : Set( Params.Default, Params.Silent );
+	end;
+
+	Library.Options[ Flag ] = Listbox;
+
+	return Listbox;
+end;
+
+local TabMethods = {};
+TabMethods.__index = TabMethods;
+
+local function column( Parent, Left )
+	local Scroll = Instance.new( "ScrollingFrame" );
+	Scroll.BackgroundTransparency = 1;
+	Scroll.Position = UDim2.new( Left and 0 or 0.5, 0, 0, 0 );
+	Scroll.Size = UDim2.new( 0.5, 0, 1, 0 );
+	Scroll.BorderSizePixel = 0;
+	Scroll.ScrollBarThickness = 2;
+	Scroll.ScrollBarImageColor3 = Theme[ "Accent" ];
+	Scroll.CanvasSize = UDim2.new();
+	Scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y;
+	Scroll.ScrollingDirection = Enum.ScrollingDirection.Y;
+	Scroll.Name = "\0";
+	Scroll.Parent = Parent;
+
+	local Layout = Instance.new( "UIListLayout" );
+	Layout.Padding = UDim.new( 0, 12 );
+	Layout.SortOrder = Enum.SortOrder.LayoutOrder;
+	Layout.Name = "\0";
+	Layout.Parent = Scroll;
+
+	local Pad = Instance.new( "UIPadding" );
+	Pad.PaddingTop = UDim.new( 0, 18 );
+	Pad.PaddingBottom = UDim.new( 0, 18 );
+	Pad.PaddingLeft = UDim.new( 0, Left and 18 or 9 );
+	Pad.PaddingRight = UDim.new( 0, Left and 9 or 18 );
+	Pad.Name = "\0";
+	Pad.Parent = Scroll;
+
+	return Scroll;
+end;
+
+function TabMethods : Section( Name, Side )
+	local Section = setmetatable( {}, { __index = Elements } );
+	local Parent = ( Side == 2 or Side == "Right" ) and self.Right or self.Left;
+
+	local Box = Instance.new( "Frame" );
+	Box.Size = UDim2.new( 1, 0, 0, 0 );
+	Box.AutomaticSize = Enum.AutomaticSize.Y;
+	Box.BackgroundColor3 = Theme[ "Section" ];
+	Box.BorderSizePixel = 0;
+	Box.Name = "\0";
+	Box.Parent = Parent;
+
+	strokes( Box, 3 );
+	gradient( Box, 255, 238 );
+
+	local BoxList = Instance.new( "UIListLayout" );
+	BoxList.SortOrder = Enum.SortOrder.LayoutOrder;
+	BoxList.Name = "\0";
+	BoxList.Parent = Box;
+
+	local Header = Instance.new( "Frame" );
+	Header.BackgroundTransparency = 1;
+	Header.Size = UDim2.new( 1, 0, 0, 30 );
+	Header.LayoutOrder = 1;
+	Header.BorderSizePixel = 0;
+	Header.Name = "\0";
+	Header.Parent = Box;
+
+	local Line = Instance.new( "Frame" );
+	Line.Size = UDim2.new( 1, 0, 0, 1 );
+	Line.ZIndex = 3;
+	Line.BackgroundColor3 = Theme[ "Accent" ];
+	Line.BorderSizePixel = 0;
+	Line.Name = "\0";
+	Line.Parent = Header;
+
+	local LineGrad = Instance.new( "UIGradient" );
+	LineGrad.Transparency = NumberSequence.new( {
+		NumberSequenceKeypoint.new( 0, 0 );
+		NumberSequenceKeypoint.new( 0.45, 0.2 );
+		NumberSequenceKeypoint.new( 1, 1 );
+	} );
+	LineGrad.Name = "\0";
+	LineGrad.Parent = Line;
+
+	local HeaderLabel = Instance.new( "TextLabel" );
+	HeaderLabel.FontFace = Library.BoldFont;
+	HeaderLabel.Text = Name or "Section";
+	HeaderLabel.TextSize = Library.TextSize;
+	HeaderLabel.TextColor3 = Theme[ "Text" ];
+	HeaderLabel.BackgroundTransparency = 1;
+	HeaderLabel.BorderSizePixel = 0;
+	HeaderLabel.Position = UDim2.fromOffset( 10, 0 );
+	HeaderLabel.Size = UDim2.new( 1, -20, 1, 0 );
+	HeaderLabel.TextXAlignment = Enum.TextXAlignment.Left;
+	HeaderLabel.Name = "\0";
+	HeaderLabel.Parent = Header;
+
+	textStroke( HeaderLabel );
+
+	Section.Holder = Instance.new( "Frame" );
+	Section.Holder.BackgroundTransparency = 1;
+	Section.Holder.Size = UDim2.new( 1, 0, 0, 0 );
+	Section.Holder.AutomaticSize = Enum.AutomaticSize.Y;
+	Section.Holder.LayoutOrder = 2;
+	Section.Holder.BorderSizePixel = 0;
+	Section.Holder.Name = "\0";
+	Section.Holder.Parent = Box;
+
+	local HolderList = Instance.new( "UIListLayout" );
+	HolderList.Padding = UDim.new( 0, 5 );
+	HolderList.SortOrder = Enum.SortOrder.LayoutOrder;
+	HolderList.Name = "\0";
+	HolderList.Parent = Section.Holder;
+
+	local HolderPad = Instance.new( "UIPadding" );
+	HolderPad.PaddingTop = UDim.new( 0, 0 );
+	HolderPad.PaddingBottom = UDim.new( 0, 12 );
+	HolderPad.PaddingLeft = UDim.new( 0, 10 );
+	HolderPad.PaddingRight = UDim.new( 0, 10 );
+	HolderPad.Name = "\0";
+	HolderPad.Parent = Section.Holder;
+
+	return Section;
+end;
+
+local WindowMethods = {};
+WindowMethods.__index = WindowMethods;
+
+function WindowMethods : Tab( Name )
+	local Window = self;
+	local Tab = setmetatable( { Name = Name }, TabMethods );
+
+	Tab.Button = Instance.new( "TextButton" );
+	Tab.Button.FontFace = Library.BoldFont;
+	Tab.Button.TextSize = Library.TextSize;
+	Tab.Button.Text = Name;
+	Tab.Button.TextColor3 = Theme[ "Dim" ];
+	Tab.Button.BackgroundTransparency = 1;
+	Tab.Button.BorderSizePixel = 0;
+	Tab.Button.AutoButtonColor = false;
+	Tab.Button.Size = UDim2.new( 1, 0, 1, 0 );
+	Tab.Button.LayoutOrder = #Window.Tabs + 1;
+	Tab.Button.Name = "\0";
+	Tab.Button.Parent = Window.TabList;
+
+	textStroke( Tab.Button );
+
+	Tab.Page = Instance.new( "Frame" );
+	Tab.Page.BackgroundTransparency = 1;
+	Tab.Page.Size = UDim2.fromScale( 1, 1 );
+	Tab.Page.Visible = false;
+	Tab.Page.BorderSizePixel = 0;
+	Tab.Page.Name = "\0";
+	Tab.Page.Parent = Window.Pages;
+
+	Tab.Left = column( Tab.Page, true );
+	Tab.Right = column( Tab.Page, false );
+
+	function Tab : Select()
+		if Window.Current == Tab then return end;
+
+		closePopups();
+
+		local Old = Window.Current;
+
+		if Old then
+			Old.Page.Visible = false;
+			tween( Old.Button, { TextColor3 = Theme[ "Dim" ] }, 0.2 );
+		end;
+
+		Window.Current = Tab;
+
+		Tab.Page.Position = UDim2.fromOffset( 0, 10 );
+		Tab.Page.Visible = true;
+		tween( Tab.Page, { Position = UDim2.fromOffset( 0, 0 ) }, 0.4 );
+		tween( Tab.Button, { TextColor3 = Theme[ "Accent" ] }, 0.2 );
+	end;
+
+	connect( Tab.Button.MouseEnter, function()
+		if Window.Current ~= Tab then
+			tween( Tab.Button, { TextColor3 = Theme[ "Text" ] }, 0.15 );
+		end;
+	end );
+
+	connect( Tab.Button.MouseLeave, function()
+		if Window.Current ~= Tab then
+			tween( Tab.Button, { TextColor3 = Theme[ "Dim" ] }, 0.15 );
+		end;
+	end );
+
+	connect( Tab.Button.MouseButton1Click, function() Tab : Select(); end );
+
+	table.insert( Window.Tabs, Tab );
+
+	for _, Existing in Window.Tabs do
+		Existing.Button.Size = UDim2.new( 1 / #Window.Tabs, 0, 1, 0 );
+	end;
+
+	if #Window.Tabs == 1 then
+		Tab : Select();
+	end;
+
+	return Tab;
+end;
+
+function WindowMethods : SetOpen( Bool )
+	if self.Open == Bool then return end;
+
+	self.Open = Bool;
+	closePopups();
+
+	if Bool then
+		self.Root.Visible = true;
+		self.Scale.Scale = 0.94;
+		tween( self.Scale, { Scale = 1 }, 0.35 );
+	else
+		local Closing = tween( self.Scale, { Scale = 0.94 }, 0.2, Enum.EasingStyle.Quint, Enum.EasingDirection.In );
+		Closing.Completed : Once( function()
+			if not self.Open then
+				self.Root.Visible = false;
+				self.Scale.Scale = 1;
+			end;
+		end );
+	end;
+end;
+
+function WindowMethods : Notify( Params )
+	Library : Notify( Params );
+end;
+
+function Library : Window( Params )
+	Params = Params or {};
+
+	local Window = setmetatable( { Tabs = {}; Open = true; }, WindowMethods );
+	local Width, Height = Params.Width or 535, Params.Height or 570;
+
+	Window.Root = Instance.new( "Frame" );
+	Window.Root.AnchorPoint = Vector2.new( 0.5, 0.5 );
+	Window.Root.Position = UDim2.fromScale( 0.5, 0.5 );
+	Window.Root.Size = UDim2.fromOffset( Width, Height );
+	Window.Root.BackgroundTransparency = 1;
+	Window.Root.BorderSizePixel = 0;
+	Window.Root.Name = "\0";
+	Window.Root.Parent = Gui;
+
+	Window.Scale = Instance.new( "UIScale" );
+	Window.Scale.Scale = 1;
+	Window.Scale.Name = "\0";
+	Window.Scale.Parent = Window.Root;
+
+	local Main = Instance.new( "Frame" );
+	Main.Size = UDim2.fromScale( 1, 1 );
+	Main.BackgroundColor3 = Theme[ "Background" ];
+	Main.BorderSizePixel = 0;
+	Main.Name = "\0";
+	Main.Parent = Window.Root;
+
+	strokes( Main, 4 );
+	gradient( Main, 255, 240 );
+
+	local Header = Instance.new( "Frame" );
+	Header.Size = UDim2.new( 1, 0, 0, 40 );
+	Header.BackgroundTransparency = 1;
+	Header.BorderSizePixel = 0;
+	Header.Name = "\0";
+	Header.Parent = Main;
+
+	local Name = Instance.new( "TextLabel" );
+	Name.FontFace = Library.BoldFont;
+	Name.TextSize = Library.TextSize + 2;
+	Name.Text = Params.Name or "Vitality";
+	Name.TextColor3 = White;
+	Name.BackgroundTransparency = 1;
+	Name.BorderSizePixel = 0;
+	Name.AnchorPoint = Vector2.new( 0, 0.5 );
+	Name.Position = UDim2.new( 0, 10, 0.5, 0 );
+	Name.Size = UDim2.new( 0, 0, 0, 18 );
+	Name.AutomaticSize = Enum.AutomaticSize.X;
+	Name.TextXAlignment = Enum.TextXAlignment.Left;
+	Name.Name = "\0";
+	Name.Parent = Header;
+
+	textStroke( Name );
+
+	local NameGrad = Instance.new( "UIGradient" );
+	NameGrad.Color = ColorSequence.new( {
+		ColorSequenceKeypoint.new( 0, White );
+		ColorSequenceKeypoint.new( 0.4, White );
+		ColorSequenceKeypoint.new( 0.75, Theme[ "Accent" ] );
+		ColorSequenceKeypoint.new( 1, Theme[ "Accent" ] );
+	} );
+	NameGrad.Name = "\0";
+	NameGrad.Parent = Name;
+
+	local User = Instance.new( "TextLabel" );
+	User.FontFace = Library.BoldFont;
+	User.TextSize = Library.TextSize + 2;
+	User.Text = Params.User or Players.LocalPlayer.Name;
+	User.TextColor3 = Theme[ "Accent" ];
+	User.BackgroundTransparency = 1;
+	User.BorderSizePixel = 0;
+	User.AnchorPoint = Vector2.new( 1, 0.5 );
+	User.Position = UDim2.new( 1, -10, 0.5, 0 );
+	User.Size = UDim2.new( 0, 0, 0, 18 );
+	User.AutomaticSize = Enum.AutomaticSize.X;
+	User.TextXAlignment = Enum.TextXAlignment.Right;
+	User.Name = "\0";
+	User.Parent = Header;
+
+	textStroke( User );
+	gradient( User, 255, 205, 0 );
+
+	local Container = Instance.new( "Frame" );
+	Container.Position = UDim2.fromOffset( 9, 40 );
+	Container.Size = UDim2.new( 1, -18, 1, -49 );
+	Container.BackgroundColor3 = Theme[ "Container" ];
+	Container.BorderSizePixel = 0;
+	Container.Name = "\0";
+	Container.Parent = Main;
+
+	strokes( Container, 3 );
+
+	Window.TabList = Instance.new( "Frame" );
+	Window.TabList.BackgroundTransparency = 1;
+	Window.TabList.Size = UDim2.new( 1, 0, 0, 30 );
+	Window.TabList.BorderSizePixel = 0;
+	Window.TabList.Name = "\0";
+	Window.TabList.Parent = Container;
+
+	local TabListLayout = Instance.new( "UIListLayout" );
+	TabListLayout.FillDirection = Enum.FillDirection.Horizontal;
+	TabListLayout.SortOrder = Enum.SortOrder.LayoutOrder;
+	TabListLayout.Name = "\0";
+	TabListLayout.Parent = Window.TabList;
+
+	local Divider = Instance.new( "Frame" );
+	Divider.Position = UDim2.fromOffset( 0, 30 );
+	Divider.Size = UDim2.new( 1, 0, 0, 1 );
+	Divider.BackgroundColor3 = Theme[ "Outline 1" ];
+	Divider.BorderSizePixel = 0;
+	Divider.Name = "\0";
+	Divider.Parent = Container;
+
+	Window.Pages = Instance.new( "Frame" );
+	Window.Pages.Position = UDim2.fromOffset( 0, 31 );
+	Window.Pages.Size = UDim2.new( 1, 0, 1, -31 );
+	Window.Pages.ClipsDescendants = true;
+	Window.Pages.BackgroundTransparency = 1;
+	Window.Pages.BorderSizePixel = 0;
+	Window.Pages.Name = "\0";
+	Window.Pages.Parent = Container;
+
+	local Dragging = false;
+	local DragStart;
+	local StartPosition;
+
+	connect( Header.InputBegan, function( Input )
+		if isPress( Input ) then
+			Dragging = true;
+			DragStart = Input.Position;
+			StartPosition = Window.Root.Position;
+		end;
+	end );
+
+	connect( UserInputService.InputChanged, function( Input )
+		if Dragging and isMove( Input ) then
+			local Delta = Input.Position - DragStart;
+			tween( Window.Root, {
+				Position = UDim2.new( StartPosition.X.Scale, StartPosition.X.Offset + Delta.X, StartPosition.Y.Scale, StartPosition.Y.Offset + Delta.Y );
+			}, 0.12, Enum.EasingStyle.Quad );
+		end;
+	end );
+
+	connect( UserInputService.InputEnded, function( Input )
+		if isPress( Input ) then Dragging = false; end;
+	end );
+
+	table.insert( Library.Windows, Window );
+
+	return Window;
+end;
+
+function Library : Unload()
+	for _, Connection in Library.Connections do
+		pcall( Connection.Disconnect, Connection );
+	end;
+
+	table.clear( Library.Connections );
+
+	pcall( function() OverlayGui : Destroy(); end );
+	pcall( function() Gui : Destroy(); end );
+	pcall( function() PopupGui : Destroy(); end );
+end;
+
+return Library;
