@@ -277,6 +277,7 @@ Watermark.Visible = false;
 Watermark.Name = "\0";
 Watermark.Parent = OverlayGui;
 strokes( Watermark, 4 );
+gradient( Watermark, 255, 200, 45 );
 
 local WMPad = Instance.new( "UIPadding" );
 WMPad.PaddingLeft = UDim.new( 0, 10 );
@@ -312,6 +313,7 @@ KeybindHud.Visible = false;
 KeybindHud.Name = "\0";
 KeybindHud.Parent = OverlayGui;
 strokes( KeybindHud, 4 );
+gradient( KeybindHud, 255, 200, 45 );
 
 local HudLine = Instance.new( "Frame" );
 HudLine.Size = UDim2.new( 1, 0, 0, 2 );
@@ -402,7 +404,6 @@ NotifyList.Parent = NotifyHolder;
 
 function Library : Notify( Params )
 	if type( Params ) == "string" then Params = { Text = Params }; end;
-
 	local Duration = Params.Duration or 5;
 	local Title = Params.Title or "Vitality";
 	local Text = Params.Text or "";
@@ -424,6 +425,7 @@ function Library : Notify( Params )
 	Card.Name = "\0";
 	Card.Parent = Holder;
 	strokes( Card, 4 );
+	gradient( Card, 255, 200, 45 );
 
 	local Accent = Instance.new( "Frame" );
 	Accent.Size = UDim2.new( 0, 2, 1, 0 );
@@ -526,6 +528,7 @@ local function modeSelector( Parent, Keybind, OnSelect )
 	Popup.Parent = PopupGui;
 	Entry.Frame = Popup;
 	strokes( Popup, 4 );
+	gradient( Popup, 255, 200, 45 );
 
 	local List = Instance.new( "UIListLayout" );
 	List.Padding = UDim.new( 0, 0 );
@@ -759,6 +762,7 @@ local function colorpicker( Parent, Params )
 	Popup.Name = "\0";
 	Popup.Parent = PopupGui;
 	strokes( Popup, 4 );
+	gradient( Popup, 255, 200, 45 );
 
 	local Palette = Instance.new( "Frame" );
 	Palette.Position = UDim2.fromOffset( 10, 10 );
@@ -882,7 +886,7 @@ local function colorpicker( Parent, Params )
 	HexBackground.Name = "\0";
 	HexBackground.Parent = Popup;
 	strokes( HexBackground, 2 );
-	gradient( HexBackground, 255, 215 );
+	gradient( HexBackground, 255, 200, 45 );
 
 	local Hex = Instance.new( "TextBox" );
 	Hex.FontFace = Library.BoldFont;
@@ -1063,7 +1067,7 @@ local function field( Parent, Height, Order )
 	Object.Name = "\0";
 	Object.Parent = Parent;
 	strokes( Object, 2 );
-	gradient( Object, 255, 215 );
+	gradient( Object, 255, 200, 45 );
 	return Object;
 end;
 
@@ -1205,7 +1209,7 @@ function Elements : Toggle( Params )
 	Box.Name = "\0";
 	Box.Parent = Button;
 	strokes( Box, 2 );
-	gradient( Box, 255, 195 );
+	gradient( Box, 255, 200, 45 );
 
 	local Fill = Instance.new( "Frame" );
 	Fill.AnchorPoint = Vector2.new( 0.5, 0.5 );
@@ -1307,7 +1311,7 @@ function Elements : Button( Params )
 	Button.Name = "\0";
 	Button.Parent = self.Holder;
 	strokes( Button, 2 );
-	gradient( Button, 255, 215 );
+	gradient( Button, 255, 200, 45 );
 
 	local Label = Instance.new( "TextLabel" );
 	Label.FontFace = Library.BoldFont;
@@ -1388,7 +1392,7 @@ function Elements : Slider( Params )
 	Track.Name = "\0";
 	Track.Parent = Row;
 	strokes( Track, 2 );
-	gradient( Track, 255, 205 );
+	gradient( Track, 255, 200, 45 );
 
 	local Fill = Instance.new( "Frame" );
 	Fill.Size = UDim2.fromScale( 0, 1 );
@@ -1457,7 +1461,7 @@ function Elements : Dropdown( Params )
 	Button.Name = "\0";
 	Button.Parent = Box;
 	strokes( Button, 2 );
-	gradient( Button, 255, 215 );
+	gradient( Button, 255, 200, 45 );
 
 	local Display = Instance.new( "TextLabel" );
 	Display.FontFace = Library.Font;
@@ -1493,6 +1497,7 @@ function Elements : Dropdown( Params )
 	List.Name = "\0";
 	List.Parent = Box;
 	strokes( List, 2 );
+	gradient( List, 255, 230, 45 );
 
 	local ListLayout = Instance.new( "UIListLayout" );
 	ListLayout.Padding = UDim.new( 0, 1 );
@@ -1702,7 +1707,7 @@ function Elements : Listbox( Params )
 	Background.Name = "\0";
 	Background.Parent = Box;
 	strokes( Background, 2 );
-	gradient( Background, 255, 232 );
+	gradient( Background, 255, 200, 45 );
 
 	local List = Instance.new( "ScrollingFrame" );
 	List.Position = UDim2.fromOffset( 0, 2 );
@@ -1848,7 +1853,7 @@ function TabMethods : Section( Name, Side )
 	Box.Name = "\0";
 	Box.Parent = Parent;
 	strokes( Box, 3 );
-	gradient( Box, 255, 238 );
+	gradient( Box, 255, 200, 45 );
 
 	local BoxList = Instance.new( "UIListLayout" );
 	BoxList.SortOrder = Enum.SortOrder.LayoutOrder;
@@ -2030,7 +2035,7 @@ function Library : Window( Params )
 	Main.Name = "\0";
 	Main.Parent = Window.Root;
 	strokes( Main, 4 );
-	gradient( Main, 255, 240 );
+	gradient( Main, 255, 200, 45 );
 
 	local Header = Instance.new( "Frame" );
 	Header.Size = UDim2.new( 1, 0, 0, 40 );
@@ -2090,6 +2095,7 @@ function Library : Window( Params )
 	Container.Name = "\0";
 	Container.Parent = Main;
 	strokes( Container, 3 );
+	gradient( Container, 255, 200, 45 );
 
 	Window.TabList = Instance.new( "Frame" );
 	Window.TabList.BackgroundTransparency = 1;
